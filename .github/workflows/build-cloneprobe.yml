@@ -1,0 +1,66 @@
+name: Build CloneProbe IPA
+
+# Builds the CloneProbe SwiftPM package on a GitHub-hosted macOS runner
+# (which has Xcode preinstalled) and produces an UNSIGNED CloneProbe.ipa.
+# The IPA is installed on the iPhone through AltStore, which re-signs it
+# with the user's free Apple ID certificate. LiveContainer then imports it
+# as a guest app and re-signs it with the LiveContainer certificate.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'CloneProbe/**'
+      - '.github/workflows/build-cloneprobe.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Show Xcode
+        run: |
+          xcodebuild -version
+          ls /Applications | grep -i xcode
+
+      - name: Install xtool
+        run: brew install xtool-org/tap/xtool
+
+      - name: Install Darwin Swift SDK from the runner's Xcode
+        # No Apple sign-in needed here: this extracts the iOS SDK from the
+        # Xcode.app that is already on the runner.
+        run: xtool sdk install /Applications/Xcode.app --slim
+
+      - name: Verify SDK
+        run: xtool sdk status
+
+      - name: Build CloneProbe
+        run: |
+          cd CloneProbe
+          xtool dev build
+
+      - name: Locate the built .app
+        run: |
+          find CloneProbe -name '*.app' -type d | tee app-list.txt
+          test -s app-list.txt
+
+      - name: Package unsigned IPA
+        run: |
+          APP=$(head -n 1 app-list.txt)
+          echo "Packaging $APP"
+          rm -rf Payload CloneProbe.ipa
+          mkdir Payload
+          cp -R "$APP" Payload/
+          ditto -c -k --sequesterRsrc --keepParent Payload CloneProbe.ipa
+          unzip -l CloneProbe.ipa
+          test -f CloneProbe.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: CloneProbe-ipa
+          path: CloneProbe.ipa
+          if-no-files-found: error
